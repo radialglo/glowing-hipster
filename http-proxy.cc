@@ -9,7 +9,9 @@
 #include <netinet/in.h>
 #include  <netdb.h>
 #include <arpa/inet.h>
+
 #include <stdio.h>
+#include <stdlib.h>
 
 
 
@@ -71,7 +73,7 @@ int main (int argc, char *argv[])
    hints.ai_flags = AI_PASSIVE; // fill in IP 
 
    //connects to localhost 127.0.0.1 at PORT_NUMBER
-   getaddrinfo(NULL,PORT_NUMBER, &hints, &res);
+   getaddrinfo("localhost",PORT_NUMBER, &hints, &res);
    //getaddrinfo("lnxsrv03.seas.ucla.edu",PORT_NUMBER, &hints, &res);
 
    //make a socket,bind it, and listen on it:
@@ -84,16 +86,22 @@ int main (int argc, char *argv[])
     
     if( bind(listen_socketfd, res->ai_addr,res->ai_addrlen) < 0)
           cerr << "ERROR binding" << endl;
-    listen(listen_socketfd, BACKLOG);
+
+    if(listen(listen_socketfd, BACKLOG) == -1) {
+        perror("listen");
+        exit(1);
+    }
    
-    //cout << "HELLO WORLD!" << endl;
+
     print_ip_and_port(&res);
+    freeaddrinfo(res);
 
 
     while(1) {
          int new_fd;
          addr_size = sizeof their_addr;
          new_fd = accept(listen_socketfd, (struct sockaddr *)&their_addr, &addr_size);
+         cout << "Recieved Connection" << endl;
          if (new_fd < 0)
                cerr << "ERROR on accept" << endl;
          string msg = "Beej was here!";
@@ -101,10 +109,16 @@ int main (int argc, char *argv[])
          len = msg.length();
          while(len > bytes_sent) {
            bytes_sent = send(new_fd, &msg, len, 0);
-           cout << bytes_sent << endl;
+           if(bytes_sent == -1) {
+               perror("send");
+               exit(0);
+           }
+           //cout << bytes_sent << endl;
            len -= bytes_sent;
          }
 
+         //TODO: only close after timeout
+         //or header tellss us to close connection
          close(new_fd);
 
     }
