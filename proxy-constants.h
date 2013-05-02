@@ -22,6 +22,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <boost/lexical_cast.hpp>
+
 /** ==== **/
 //CUSTOM EXCEPTIONS
 enum prox_exception_t {CONNECTION_ERR,INVALID_HOST};
@@ -35,7 +37,7 @@ enum prox_exception_t {CONNECTION_ERR,INVALID_HOST};
                             // for client connections
                             // TODO: this number should be reset to 14805
 
-#define REMOTE_CXN_LMT 100 // the number of simulatenous connections
+#define REMOTE_CXN_LMT 100 // the number of simultaneous connections
                            // allowed to remote servers
 
 #define CLIENT_CXN_LMT 10 //the incoming connection limit
@@ -46,14 +48,14 @@ enum prox_exception_t {CONNECTION_ERR,INVALID_HOST};
                           //we make the backlog a little larger
                           //to accommadte for more connections
 
-#define PROCESS_LMT CLIENT_CXN_LMT //the number of processes our
+#define THREAD_LMT CLIENT_CXN_LMT //the number of threads our
                                    //proxy runs
 
 #define TIMEOUT 15000          //in millseconds  
                                //the default connection time out of 
-                               // Apache 2.0 httpd
-                               // timeout will be broken into smaller intervals
-                               // to check if connection is still active
+                               //Apache 2.0 httpd
+                               //timeout will be broken into smaller intervals
+                               //to check if connection is still active
                                    
 
 #endif 
