@@ -10,17 +10,27 @@
 #include <iostream>
 #include "http-request.h"
 #include "http-response.h"
-#include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <sstream>
+#include <string>
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+/** ==== **/
+//CUSTOM EXCEPTIONS
+enum prox_exception_t {CONNECTION_ERR,INVALID_HOST};
+
+/** ==== **/
 
 
+#define SOCKET_ERROR -1
+#define MAX_DATA_SIZE 4096
 #define PORT_NUMBER "16290" // the listening port
                             // for client connections
                             // TODO: this number should be reset to 14805
