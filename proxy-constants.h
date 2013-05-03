@@ -41,6 +41,7 @@
 enum proxy_exception_t {
   CONNECTION_ERR,
   INVALID_HOST,
+  DATE_PARSE_ERR,
   INTERNAL_SERVER_ERR // ie server may terminate prematurely
 
 };

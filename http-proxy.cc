@@ -3,6 +3,18 @@
 
 using namespace std;
 
+typedef struct Metadata {
+  time_t last_modified;
+  time_t expires;
+  string str_last_modified;
+  string response;
+} meta_t;
+
+typedef pair<string, meta_t> cache_record_t;
+typedef unordered_map<string, meta_t> cache_t;
+  
+typedef pair<string, meta_t> cache_record_t;
+typedef unordered_map<string, meta_t> cache_t;
 void server_greeting (const struct addrinfo *p); 
 void *get_in_addr(struct sockaddr *sa);
 in_port_t get_in_port(struct sockaddr *sa);
@@ -13,15 +25,9 @@ string GetMsgBody(int sockfd, size_t total, size_t len);
 void ClientHandler(int client_fd);
 string BuildErrorMsg(const string &code, const string &msg); 
 bool IsNewerTime(time_t time_a, time_t time_b);
+time_t StrToTime(string &date_string); 
+void AddToCache(cache_t &cache, const string key, const string response); 
 
-struct Metadata {
-  time_t last_modified;
-  time_t expires;
-  string str_last_modified;
-  string response;
-};
-  
-typedef unordered_map<string, Metadata> cache_t;
 cache_t cache;
 mutex m;
 
@@ -185,6 +191,55 @@ string GetMsgBody(int sockfd, size_t total, size_t len) {
 
   return msg_body;
 } 
+
+/* StrToTime
+ *
+ * @param date_string 
+ *
+ * @return time_t coverted time object
+ */
+time_t StrToTime(string &date_string) {
+  struct tm tm;
+
+   //Sat, 04 May 2013 14:55:17 GMT
+
+  //for now assume everything is GMT
+  if (strptime(date_string.c_str(),"%a, %d %b %Y %H:%M:%S GMT", &tm) == NULL) {
+
+    //throw(DATE_PARSE_ERR);
+    cerr << "*** Unable to convert " << date_string << endl ;
+
+  }
+
+  cout << endl << "SUCCESSFULLY PARSED " << date_string << endl;
+
+  return  mktime(&tm);
+}
+
+/* AddToCache
+ *
+ *
+ */
+
+void AddToCache(cache_t &cache, const string key,const string response) {
+  
+  HttpResponse resp;
+  resp.ParseResponse(&(response[0]),response.length());
+  
+  //build metadata object
+  meta_t meta_data;
+  string str_last_modified = resp.FindHeader(LAST_MODIFIED),
+         str_expires = resp.FindHeader(EXPIRES);
+
+  meta_data.str_last_modified = resp.FindHeader(LAST_MODIFIED);
+  meta_data.last_modified = StrToTime(str_last_modified);
+  meta_data.expires = StrToTime(str_expires);
+  meta_data.response = response;
+
+  cache_record_t record = {key, meta_data};
+  cache.insert (record);
+
+}
 
 /* CreateProxyListener
  *
@@ -397,10 +452,14 @@ void ClientHandler(int client_fd) {
     }
 
     // See if response already cached
+    string key = req.GetHost() + req.GetPath();
     cache_t::iterator it;
     
     m.lock();
-    if ( (it = cache.find(req.GetHost() + req.GetPath())) != cache.end()) {
+    //If we have found the key in the cache
+    //determine wheter or not we can return the cached value
+    if ( (it = cache.find(key)) != cache.end()) {
+
       string modified_since = req.FindHeader(IF_MODIFIED_SINCE);
       if (modified_since == "") {
         // Check if current time is newer than expires time
@@ -408,6 +467,17 @@ void ClientHandler(int client_fd) {
         if (IsNewerTime(mktime(gmtime(&t)), it->second.expires)) {
           // Send request to host with added If-Modified-Since with Last-Modified
           req.AddHeader(IF_MODIFIED_SINCE, it->second.str_last_modified);
+        } else {
+        //if the cache is not stale  then send 
+        //the cached value back to client
+
+        string response = it->second.response ;
+        //resp.AddH
+        size_t response_len = response.length();
+        SendMsg(client_fd, &(response[0]), &response_len);
+        cout << endl <<  "Message sent from CACHE " << endl;
+        continue;
+
         }
 
         m.unlock();
@@ -423,21 +493,17 @@ void ClientHandler(int client_fd) {
         // Always send request to host
       }
       
-    } else { // Just return cached content
-      // TODO: return proper HTTP response with headers
-      m.unlock();
-      HttpResponse resp;
-      //resp.AddH
-        
-      
-    }
+    } 
+    // TODO: return proper HTTP response with headers
+    //proceed normally with contacting remote host
+    m.unlock();
 
     char formatted[MAX_DATA_SIZE]; 
     memset(formatted, 0, sizeof(formatted));
     req.FormatRequest(formatted); 
     cout << "*** Formatted Request: " << formatted;
     cout << "/** end  Client Request **/" << endl;
-    
+
 
     // Connect to remote host 
     int remote_fd;
@@ -529,6 +595,8 @@ void ClientHandler(int client_fd) {
 
       try {
         msg_body += GetMsgBody(remote_fd, msg_body.length(), content_length);
+        //add the message body we recieved to the response
+        response += msg_body;
       } catch (int e) {
         //TODO: handle retrieval of body failing
         cout << "Error" << endl;
@@ -537,34 +605,32 @@ void ClientHandler(int client_fd) {
     }
 
     //by this time response will have been fully retrieved
-    response += msg_body;
 
     //TODO: add all content to cache
     m.lock();
-    if ( (it = cache.find(req.GetHost() + req.GetPath())) != cache.end()) {
+    if ( (it = cache.find(key)) != cache.end()) {
       // Update the cache value
       string last_modified_str = resp.FindHeader(LAST_MODIFIED);
-      struct tm tm;
       if (last_modified_str != "") {
-        it->second.str_last_modified = last_modified_str;
-        if (strptime(last_modified_str.c_str(),"%a %d %b %Y %H:%M:%S", &tm) == NULL)
-          cerr << "*** Bad Last-Modified date\n";
-        it->second.last_modified = mktime(&tm);
+        it->second.last_modified = StrToTime(last_modified_str); 
       }
 
       string expires_str = resp.FindHeader(EXPIRES);
       if (expires_str != "") {
-        if (strptime(expires_str.c_str(),"%a %d %b %Y %H:%M:%S", &tm) == NULL)
-          cerr << "*** Bad Expires date\n";
-        it->second.expires = mktime(&tm);
+        //if (strptime(expires_str.c_str(),"%a %d %b %Y %H:%M:%S", &tm) == NULL)
+        //  cerr << "*** Bad Expires date\n";
+        it->second.expires = StrToTime(expires_str); 
       }
       
       it->second.response = response;
       
-    } else { 
-        
+      //TODO: update cache
       
+    } else { 
+      //add file to cache
+      AddToCache(cache, key, response); 
     }
+
     m.unlock();
 
     cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl;
