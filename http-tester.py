@@ -1,5 +1,4 @@
-#!/usr/bin/python
-## #!/usr/local/cs/bin/python
+#!/usr/bin/env python
 
 from threading import Thread
 from httplib import HTTPConnection

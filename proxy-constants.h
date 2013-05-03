@@ -7,35 +7,66 @@
 #ifndef _PROXY_CONSTANTS_H_
 #define _PROXY_CONSTANTS_H_
 
-#include <iostream>
 #include "http-request.h"
 #include "http-response.h"
+
+// sockets
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+
+#include <iostream>
 #include <sstream>
 #include <string>
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <boost/lexical_cast.hpp>
 
+// For threading and cache
+#include <unordered_map>
+#include <mutex>
+#include <thread>
+
+// For date and time
+#include <ctime>
+#include <time.h>
+
 /** ==== **/
 //CUSTOM EXCEPTIONS
-enum prox_exception_t {CONNECTION_ERR,INVALID_HOST};
+enum proxy_exception_t {
+  CONNECTION_ERR,
+  INVALID_HOST
+};
 
 /** ==== **/
 
+#define END_OF_HEADERS "\r\n\r\n"
+#define END_OF_HEADERS_LEN 4
 
+// cache specific headers
+#define CONTENT_LENGTH "Content-Length"
+#define IF_MODIFIED_SINCE "If-Modified-Since"
+#define EXPIRES "Expires"
+#define LAST_MODIFIED "Last-Modified"
+#define NOT_MODIFIED "Not Modified"
+
+
+// HTTP response codes
 #define INVALID_METHOD "Request is not GET"
-#define NOT_IMPLEMENTED "Not implemented"
-#define BAD_REQUEST "Bad Request"
+
 #define NOT_IMPLEMENTED_CODE "501"
+#define NOT_IMPLEMENTED "Not Implemented"
+
 #define BAD_REQUEST_CODE "400"
+#define BAD_REQUEST "Bad Request"
+
+#define INTERNAL_SERVER_ERROR_CODE "500"
+#define INTERNAL_SERVER_ERROR "Internal Server Error"
+
 
 #define SOCKET_ERROR -1
 #define MAX_DATA_SIZE 4096

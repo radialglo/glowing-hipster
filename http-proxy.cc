@@ -11,6 +11,17 @@ int CreateProxyListener(const char* port);
 int SendMsg(int sockfd, char *buf, int *len);
 void ClientHandler(int client_fd);
 string BuildErrorMsg(const string &code, const string &msg); 
+bool IsNewerTime(time_t time_a, time_t time_b);
+
+struct Metadata {
+  time_t last_modified;
+  time_t expires;
+  string str_last_modified;
+  string content;
+};
+  
+typedef unordered_map<string, Metadata> cache_t;
+cache_t cache;
 
 int main (int argc, char *argv[])
 {
@@ -81,6 +92,11 @@ void server_greeting (const struct addrinfo *p) {
 }
 
 
+// compare time
+bool IsNewerTime(time_t time_a, time_t time_b) {
+  return difftime(time_a, time_b) > 0.0 ? true : false;
+}
+
 // get sockaddr, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa) {
 
@@ -113,9 +129,9 @@ in_port_t get_in_port(struct sockaddr *sa) {
  * @param length of message
  */
 
-int SendMsg(int sockfd, char *buf, int *len) {
+int SendMsg(int sockfd, char *buf, size_t *len) {
 
-  int total = 0;        // how many bytes we've sent
+  size_t total = 0;        // how many bytes we've sent
   int bytesleft = *len; // how many we have left to send
   int n;
 
@@ -184,7 +200,7 @@ int CreateProxyListener(const char* port) {
       exit(1);
     }
     
-    if (bind(listen_socketfd, p->ai_addr, p->ai_addrlen) == SOCKET_ERROR) {
+    if (::bind(listen_socketfd, p->ai_addr, p->ai_addrlen) == SOCKET_ERROR) {
       close(listen_socketfd);
       cerr << "ERROR binding" << endl;
       continue;
@@ -260,7 +276,7 @@ int ConnectToRemoteHost(const string host, const int port) {
   inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
       s, sizeof s);
 
-  printf("proxy socket %d: connecting to %s\n\n", sockfd, s);
+  //printf("proxy socket %d: connecting to %s\n\n", sockfd, s);
 
   freeaddrinfo(servinfo); // all done with this structure
   return sockfd;
@@ -299,37 +315,31 @@ void ClientHandler(int client_fd) {
   HttpRequest req;
   for (;;) {
 
-    string req_msg, resp_msg; 
-    int total_bytes = 0 , numbytes = 0;
-    char buf[MAX_DATA_SIZE] , out[MAX_DATA_SIZE]; 
+    int num_bytes = 0;
+    char buf[MAX_DATA_SIZE];
  
-    //do {
-    if((numbytes = recv(client_fd, buf, MAX_DATA_SIZE - 1, 0)) == -1) {
-      perror("recv");
+    // Get Client Request
+    // TODO: we assume one HTTP GET per recv
+    // WE MAY NEED TO MEMMEM IF THERE ARE MULTIPLE REQUESTS PER RECV
+    if ((num_bytes = recv(client_fd, buf, MAX_DATA_SIZE - 1, 0)) == -1) {
+      perror("client recv");
     }
- 
-    req_msg += buf;
-    total_bytes += numbytes;
-    //} while (numbytes != 0);
- 
-    req_msg += '\0';
+    string req_msg = buf;
  
     //if the connection was closed
-    if(total_bytes == 0) {
+    if (num_bytes == 0) {
       cout << "Closing Connection" << endl;
       close(client_fd);
       break;
     }
  
- 
-    //TODO: only close after timeout
-    //or header tellss us to close connection
-    
+    // Parse Client Request
     try { 
-      req.ParseRequest(&(req_msg[0]),req_msg.length());
+      req.ParseRequest(&(req_msg[0]), req_msg.length());
     } catch (ParseException ex) {
       cerr << "Exception: " << ex.what() << endl; 
-      // TODO: send proper wror response
+
+      // TODO: send proper error response
       string err_msg;
       if(strcmp(ex.what(), INVALID_METHOD) == 0) {
         err_msg = BuildErrorMsg(NOT_IMPLEMENTED_CODE, NOT_IMPLEMENTED);
@@ -337,71 +347,136 @@ void ClientHandler(int client_fd) {
         err_msg = BuildErrorMsg(BAD_REQUEST_CODE, BAD_REQUEST);
       }
 
-      int err_msg_len = err_msg.length();
+      size_t err_msg_len = err_msg.length();
       SendMsg(client_fd, &(err_msg[0]), &err_msg_len);
       close(client_fd);
       return;
     }
-    req.FormatRequest(out); 
-    cout << out << endl;
-    cout << "/** end  Client Request **/" << endl << endl;
 
-    // TODO: request is not properly setting host and port number
-    cout << "Host: " << req.GetHost() << " Port: " << req.GetPort() << endl;
- 
+    // See if response already cached
+    cache_t::iterator it;
+    
+    if ( (it = cache.find(req.GetHost() + req.GetPath())) != cache.end()) {
+      string modified_since = req.FindHeader(IF_MODIFIED_SINCE);
+      if (modified_since == "") {
+        // Check if current time is newer than expires time
+        time_t t = time(NULL);
+        if (IsNewerTime(mktime(gmtime(&t)), it->second.expires)) {
+          // Send request to host with added If-Modified-Since with Last-Modified
+          req.AddHeader(IF_MODIFIED_SINCE, it->second.str_last_modified);
+        }
+        // Convert the string to time_t 
+
+      } else { // Always send request to host
+        // Convert the string to time_t 
+        struct tm tm;
+        if (strptime(modified_since.c_str(), "%a, %d %b %Y %H:%M:%S", &tm) == NULL)
+          cerr << "*** Bad If-Modified-Since date\n";
+        time_t t = mktime(&tm);
+        cerr << t << endl;
+
+        // Always send request to host
+      }
+      
+    }
+
+    char formatted[MAX_DATA_SIZE]; 
+    req.FormatRequest(formatted); 
+    cout << formatted;
+    cout << "/** end  Client Request **/" << endl;
+    
+
+    // Connect to remote host 
     int remote_fd;
     try {
       remote_fd = ConnectToRemoteHost(req.GetHost(),req.GetPort());
       //then listen 
       //cout << remote_fd;
     } catch (int e) {
-      cout << "ERROR Connecting to Remote Host" << endl;
- 
+      cout << "*** ERROR Connecting to Remote Host" << endl;
+
+      string err_msg;
+      if (e == CONNECTION_ERR) {
+        err_msg = BuildErrorMsg(INTERNAL_SERVER_ERROR_CODE, INTERNAL_SERVER_ERROR);
+      } else if (e ==  INVALID_HOST) {
+        err_msg = BuildErrorMsg(BAD_REQUEST_CODE, BAD_REQUEST);
+      }
+
+      size_t err_msg_len = err_msg.length();
+      SendMsg(client_fd, &(err_msg[0]), &err_msg_len);
+      close(client_fd);
+      return;
     }
 
-     cout << "Successfully connected to remote host" << endl;
+    cout << "*** Successfully connected to remote host" << endl;
     //send to remote host
-    int req_msg_len = req.GetTotalLength();
-    SendMsg(remote_fd, out, &req_msg_len);
-    cout <<  "SENT REQUEST TO HOST:" << endl
-    << out << endl;
+    size_t req_msg_len = req.GetTotalLength();
+    SendMsg(remote_fd, formatted, &req_msg_len);
+    cout <<  "*** SENT REQUEST TO HOST:" << endl << formatted;
     
-    //rcv response
+    // Receive host response
     //clear buffers before using them again
     memset(buf, 0, sizeof buf);
-    memset(out, 0, sizeof out);
+    memset(formatted, 0, sizeof(formatted));
 
-    if ((numbytes = recv(remote_fd, buf, MAX_DATA_SIZE-1, 0)) == SOCKET_ERROR || numbytes == 0) {
-      fprintf(stderr, "recv: numbytes = %d\n", numbytes);
+    string response;
+
+    // TODO:
+    // Assume one reseponse per recv
+    if ((num_bytes = recv(remote_fd, buf, MAX_DATA_SIZE-1, 0)) == SOCKET_ERROR || num_bytes == 0) {
+      fprintf(stderr, "recv: numbytes = %d\n", num_bytes);
     }
+    response.append(buf);
 
-    //buf[numbytes] = '\0';
-    resp_msg += buf;
-    printf("proxy socket %d: received \n'%s'\n",remote_fd, &(resp_msg[0]));
+    size_t content_pos = response.find(END_OF_HEADERS);
+    if (content_pos == string::npos) {
+      cerr << "*** NEED TO HANDLE THE CASE WHEN MULTIPLE RECV PER RESPONSE\n";
+      cerr << response << endl;
+    }
+    content_pos += END_OF_HEADERS_LEN;
+    //while ( (memmem(response.c_str(), response.length(), "\r\n\r\n", 4) ) == NULL) {
+    //}
+
+    string response_content;
+
+    // Get the Content-Length
+    string content_len = req.FindHeader(CONTENT_LENGTH);
+    cout << content_len << endl;
+    if (content_len != "") {
+      cout << content_len << endl;
+      size_t len = (size_t) stoi(content_len);
+      // Check that our response holds the entire content
+      if (len != 0 && (response.length() - content_pos) >= len)
+        response_content = response.substr(content_pos, len);
+    } 
+    
+    // TODO: cache url, dates, content
+
+    cout << "*** RECEIVED RESPONSE FROM HOST\n";
+    //printf("proxy socket %d: received \n'%s'\n",remote_fd, &(resp_msg[0]));
 
     HttpResponse resp;
     try {
-      resp.ParseResponse(&(resp_msg[0]),resp_msg.length());
+      resp.ParseResponse(&(response[0]),response.length());
     } catch (ParseException e) {
 
     }
-    resp.FormatResponse(out);
-    cout << "RESPONSE MESSAGE SENT TO CLIENT" << endl 
-    << "'" << out << "'" << endl;
-    int resp_msg_len = resp.GetTotalLength();
-    resp_msg = out;
+    resp.FormatResponse(formatted);
+    cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl <<formatted<< endl;
+
+    size_t response_len = resp.GetTotalLength();
     //resp_msg_len = resp_msg.length();
-    SendMsg(client_fd, &(resp_msg[0]), &resp_msg_len);
-    cout << resp_msg_len << endl;
+    SendMsg(client_fd, &(response[0]), &response_len);
+    cout << "*** RESPONSE LENGTH " << response_len << endl;
+    if (response_len != resp.GetTotalLength())
+      cout << "*** Did not send entire respones\n";
 
     //TODO: cache
     //send back to client
 
     close(client_fd);
     close(remote_fd);
-    break;
+    //break;
   }
 }
-
-
 
