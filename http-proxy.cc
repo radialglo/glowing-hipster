@@ -23,6 +23,7 @@ struct Metadata {
   
 typedef unordered_map<string, Metadata> cache_t;
 cache_t cache;
+mutex m;
 
 int main (int argc, char *argv[])
 {
@@ -41,6 +42,7 @@ int main (int argc, char *argv[])
     cerr << "Failed to create listening socket\n";
   }
 
+  boost::thread t;
   while(1) { //main accept loop
 
     addr_size = sizeof(their_addr);
@@ -53,13 +55,15 @@ int main (int argc, char *argv[])
 
     inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr *)&their_addr),
               ipstr, sizeof ipstr);
-    cout << "Accept: got a Connection from " << ipstr << endl;
+    cout << "Accept: got a Connection from " << ipstr << " on port" << new_fd << endl;
 
-    ClientHandler(new_fd);
-
+    // TODO: be careful if new_fd is copied and not referenced?
+    t = boost::thread(ClientHandler, new_fd);
+    //ClientHandler(new_fd);
+    t.detach();
   }
 
-  //make sure we close server port
+  //make sure we close proxy port
   close(listen_socketfd);
 
   return 0;
@@ -162,7 +166,6 @@ int SendMsg(int sockfd, char *buf, size_t *len) {
 
 string GetMsgBody(int sockfd, size_t len) {
 
-
   string msg_body;
   size_t total = 0;        // how many bytes we've sent
   int bytesleft = len; // how many we have left to send
@@ -181,7 +184,6 @@ string GetMsgBody(int sockfd, size_t len) {
   }
 
   return msg_body;
-
 } 
 
 /* CreateProxyListener
@@ -363,6 +365,7 @@ void ClientHandler(int client_fd) {
     // Get Client Request
     // TODO: we assume one HTTP GET per recv
     // WE MAY NEED TO MEMMEM IF THERE ARE MULTIPLE REQUESTS PER RECV
+    memset(buf, 0, sizeof(buf));
     if ((num_bytes = recv(client_fd, buf, MAX_DATA_SIZE - 1, 0)) == -1) {
       perror("client recv");
     }
@@ -396,6 +399,7 @@ void ClientHandler(int client_fd) {
     // See if response already cached
     cache_t::iterator it;
     
+    m.lock();
     if ( (it = cache.find(req.GetHost() + req.GetPath())) != cache.end()) {
       string modified_since = req.FindHeader(IF_MODIFIED_SINCE);
       if (modified_since == "") {
@@ -405,7 +409,6 @@ void ClientHandler(int client_fd) {
           // Send request to host with added If-Modified-Since with Last-Modified
           req.AddHeader(IF_MODIFIED_SINCE, it->second.str_last_modified);
         }
-        // Convert the string to time_t 
 
       } else { // Always send request to host
         // Convert the string to time_t 
@@ -419,6 +422,7 @@ void ClientHandler(int client_fd) {
       }
       
     }
+    m.unlock();
 
     char formatted[MAX_DATA_SIZE]; 
     req.FormatRequest(formatted); 
@@ -495,10 +499,14 @@ void ClientHandler(int client_fd) {
 
     }
 
-    cout << "CHECKING FOR CONTENT" << endl;
+    cout << "*** CHECKING FOR CONTENT" << endl;
     //after we get response check for message body
     string msg_body;
-    int  content_length = stoi(resp.FindHeader(CONTENT_LENGTH));
+    string content_length_str = resp.FindHeader(CONTENT_LENGTH);
+    cout << "*** CONTENT LENGTH = " << content_length_str << endl;
+    int content_length = 0;
+    if (content_length_str != "")
+      content_length = stoi(content_length_str);
     int  remaining_content_length = 0;
 
     //check to see if content was already retrieved from buffer
@@ -538,6 +546,7 @@ void ClientHandler(int client_fd) {
 
     //for simplicity close remote each time
     close(remote_fd);
+    break;
   }
   
   //if there are any errors

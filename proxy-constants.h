@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include <boost/lexical_cast.hpp>
+#include <boost/thread.hpp>
 
 // For threading and cache
 #include <unordered_map>
