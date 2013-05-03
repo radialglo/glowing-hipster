@@ -9,7 +9,7 @@ in_port_t get_in_port(struct sockaddr *sa);
 int ConnectToRemoteHost(const string host , const int port); 
 int CreateProxyListener(const char* port);
 int SendMsg(int sockfd, char *buf, int *len);
-string GetMsgBody(int sockfd, size_t len); 
+string GetMsgBody(int sockfd, size_t total, size_t len); 
 void ClientHandler(int client_fd);
 string BuildErrorMsg(const string &code, const string &msg); 
 bool IsNewerTime(time_t time_a, time_t time_b);
@@ -18,7 +18,7 @@ struct Metadata {
   time_t last_modified;
   time_t expires;
   string str_last_modified;
-  string content;
+  string response;
 };
   
 typedef unordered_map<string, Metadata> cache_t;
@@ -164,22 +164,22 @@ int SendMsg(int sockfd, char *buf, size_t *len) {
  * @param expected length of message
  */
 
-string GetMsgBody(int sockfd, size_t len) {
+string GetMsgBody(int sockfd, size_t total, size_t len) {
 
   string msg_body;
-  size_t total = 0;        // how many bytes we've sent
-  int bytesleft = len; // how many we have left to send
   int n;
   char buf[MAX_DATA_SIZE];
 
   while(total < len) {
-    n = recv(sockfd, buf, bytesleft, 0);
+    n = recv(sockfd, buf, MAX_DATA_SIZE - 1, 0);
     if (n == -1) {  
      throw INTERNAL_SERVER_ERR;
+    } else if (n == 0) {
+      cerr << "*** WARNING: BAD HANDLING IN GetMsgBody\n";
+      break; 
     }
 
     total += n;
-    bytesleft -= n;
     msg_body += buf;
   }
 
@@ -356,9 +356,9 @@ string BuildErrorMsg(const string &code, const string &msg) {
  */
 void ClientHandler(int client_fd) {
 
-  HttpRequest req;
   for (;;) {
 
+    HttpRequest req;
     int num_bytes = 0;
     char buf[MAX_DATA_SIZE];
  
@@ -410,7 +410,9 @@ void ClientHandler(int client_fd) {
           req.AddHeader(IF_MODIFIED_SINCE, it->second.str_last_modified);
         }
 
+        m.unlock();
       } else { // Always send request to host
+        m.unlock();
         // Convert the string to time_t 
         struct tm tm;
         if (strptime(modified_since.c_str(), "%a, %d %b %Y %H:%M:%S", &tm) == NULL)
@@ -421,12 +423,19 @@ void ClientHandler(int client_fd) {
         // Always send request to host
       }
       
+    } else { // Just return cached content
+      // TODO: return proper HTTP response with headers
+      m.unlock();
+      HttpResponse resp;
+      //resp.AddH
+        
+      
     }
-    m.unlock();
 
     char formatted[MAX_DATA_SIZE]; 
+    memset(formatted, 0, sizeof(formatted));
     req.FormatRequest(formatted); 
-    cout << formatted;
+    cout << "*** Formatted Request: " << formatted;
     cout << "/** end  Client Request **/" << endl;
     
 
@@ -501,26 +510,25 @@ void ClientHandler(int client_fd) {
 
     cout << "*** CHECKING FOR CONTENT" << endl;
     //after we get response check for message body
-    string msg_body;
     string content_length_str = resp.FindHeader(CONTENT_LENGTH);
-    cout << "*** CONTENT LENGTH = " << content_length_str << endl;
     int content_length = 0;
     if (content_length_str != "")
       content_length = stoi(content_length_str);
-    int  remaining_content_length = 0;
+    int remaining_content_length = 0;
 
     //check to see if content was already retrieved from buffer
     //if it was already retrieved then it will be a substring of 
     //the response
-    msg_body = response.substr(end_of_headers, content_length);
+    string msg_body = response.substr(end_of_headers, content_length);
     remaining_content_length = content_length - msg_body.length();
 
     
     //otherwise get the rest of the message body
+    msg_body = "";
     if(remaining_content_length != 0) {
 
       try {
-        msg_body += GetMsgBody(remote_fd,content_length);
+        msg_body += GetMsgBody(remote_fd, msg_body.length(), content_length);
       } catch (int e) {
         //TODO: handle retrieval of body failing
         cout << "Error" << endl;
@@ -531,22 +539,45 @@ void ClientHandler(int client_fd) {
     //by this time response will have been fully retrieved
     response += msg_body;
 
-    resp.FormatResponse(formatted);
     //TODO: add all content to cache
+    m.lock();
+    if ( (it = cache.find(req.GetHost() + req.GetPath())) != cache.end()) {
+      // Update the cache value
+      string last_modified_str = resp.FindHeader(LAST_MODIFIED);
+      struct tm tm;
+      if (last_modified_str != "") {
+        it->second.str_last_modified = last_modified_str;
+        if (strptime(last_modified_str.c_str(),"%a %d %b %Y %H:%M:%S", &tm) == NULL)
+          cerr << "*** Bad Last-Modified date\n";
+        it->second.last_modified = mktime(&tm);
+      }
 
-    cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl <<formatted<< endl;
+      string expires_str = resp.FindHeader(EXPIRES);
+      if (expires_str != "") {
+        if (strptime(expires_str.c_str(),"%a %d %b %Y %H:%M:%S", &tm) == NULL)
+          cerr << "*** Bad Expires date\n";
+        it->second.expires = mktime(&tm);
+      }
+      
+      it->second.response = response;
+      
+    } else { 
+        
+      
+    }
+    m.unlock();
+
+    cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl;
     
     cout << response << endl;;
 
-    //size_t response_len = resp.GetTotalLength();
     size_t response_len = response.length();
-    //resp_msg_len = resp_msg.length();
     SendMsg(client_fd, &(response[0]), &response_len);
     cout << "*** RESPONSE LENGTH " << response_len << endl;
 
     //for simplicity close remote each time
     close(remote_fd);
-    break;
+    //break;
   }
   
   //if there are any errors
