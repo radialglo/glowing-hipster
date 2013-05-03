@@ -9,6 +9,7 @@ in_port_t get_in_port(struct sockaddr *sa);
 int ConnectToRemoteHost(const string host , const int port); 
 int CreateProxyListener(const char* port);
 int SendMsg(int sockfd, char *buf, int *len);
+string GetMsgBody(int sockfd, size_t len); 
 void ClientHandler(int client_fd);
 string BuildErrorMsg(const string &code, const string &msg); 
 bool IsNewerTime(time_t time_a, time_t time_b);
@@ -57,6 +58,10 @@ int main (int argc, char *argv[])
     ClientHandler(new_fd);
 
   }
+
+  //make sure we close server port
+  close(listen_socketfd);
+
   return 0;
 }
 
@@ -145,6 +150,38 @@ int SendMsg(int sockfd, char *buf, size_t *len) {
   *len = total; // return number actually sent here
 
   return n == -1 ? -1 : 0; // return -1 on failure, 0 on success
+} 
+
+/* GetMsgBody 
+ *
+ * gets the full or remaining  message unless there is an error encountered
+ *
+ * @param sockfd - fd to where message body is hosted 
+ * @param expected length of message
+ */
+
+string GetMsgBody(int sockfd, size_t len) {
+
+
+  string msg_body;
+  size_t total = 0;        // how many bytes we've sent
+  int bytesleft = len; // how many we have left to send
+  int n;
+  char buf[MAX_DATA_SIZE];
+
+  while(total < len) {
+    n = recv(sockfd, buf, bytesleft, 0);
+    if (n == -1) {  
+     throw INTERNAL_SERVER_ERR;
+    }
+
+    total += n;
+    bytesleft -= n;
+    msg_body += buf;
+  }
+
+  return msg_body;
+
 } 
 
 /* CreateProxyListener
@@ -307,6 +344,11 @@ string BuildErrorMsg(const string &code, const string &msg) {
 }
 
 /* ClientHandler
+ *
+ * parses client request
+ * contacts remmote host
+ * and sends responses back to client
+ *
  * @param int client_fd - socket fd of client
  *
  */
@@ -329,7 +371,6 @@ void ClientHandler(int client_fd) {
     //if the connection was closed
     if (num_bytes == 0) {
       cout << "Closing Connection" << endl;
-      close(client_fd);
       break;
     }
  
@@ -349,8 +390,7 @@ void ClientHandler(int client_fd) {
 
       size_t err_msg_len = err_msg.length();
       SendMsg(client_fd, &(err_msg[0]), &err_msg_len);
-      close(client_fd);
-      return;
+      break;
     }
 
     // See if response already cached
@@ -423,35 +463,28 @@ void ClientHandler(int client_fd) {
 
     // TODO:
     // Assume one reseponse per recv
-    if ((num_bytes = recv(remote_fd, buf, MAX_DATA_SIZE-1, 0)) == SOCKET_ERROR || num_bytes == 0) {
-      fprintf(stderr, "recv: numbytes = %d\n", num_bytes);
+    int resp_bytes = 0;
+    size_t end_of_headers = string::npos; 
+    while  ((resp_bytes = recv(remote_fd, buf, MAX_DATA_SIZE-1, 0)) > 0 ) {
+
+       response.append(buf, resp_bytes);
+
+       //if we found the end of the headers 
+       if((end_of_headers = response.find(END_OF_HEADERS)) != string::npos) {
+         break;
+       }
+
     }
-    response.append(buf);
 
-    size_t content_pos = response.find(END_OF_HEADERS);
-    if (content_pos == string::npos) {
-      cerr << "*** NEED TO HANDLE THE CASE WHEN MULTIPLE RECV PER RESPONSE\n";
-      cerr << response << endl;
-    }
-    content_pos += END_OF_HEADERS_LEN;
-    //while ( (memmem(response.c_str(), response.length(), "\r\n\r\n", 4) ) == NULL) {
-    //}
+    //keep track of its position
+    end_of_headers += END_OF_HEADERS_LEN;
 
-    string response_content;
-
-    // Get the Content-Length
-    string content_len = req.FindHeader(CONTENT_LENGTH);
-    cout << content_len << endl;
-    if (content_len != "") {
-      cout << content_len << endl;
-      size_t len = (size_t) stoi(content_len);
-      // Check that our response holds the entire content
-      if (len != 0 && (response.length() - content_pos) >= len)
-        response_content = response.substr(content_pos, len);
-    } 
     
-    // TODO: cache url, dates, content
-
+    if (resp_bytes == SOCKET_ERROR) {
+      fprintf(stderr, "recv: numbytes = %d\n", num_bytes);
+      //TODO: SEND ERR BACK TO HOST
+      exit(1);
+    }
     cout << "*** RECEIVED RESPONSE FROM HOST\n";
     //printf("proxy socket %d: received \n'%s'\n",remote_fd, &(resp_msg[0]));
 
@@ -461,22 +494,58 @@ void ClientHandler(int client_fd) {
     } catch (ParseException e) {
 
     }
-    resp.FormatResponse(formatted);
-    cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl <<formatted<< endl;
 
-    size_t response_len = resp.GetTotalLength();
+    cout << "CHECKING FOR CONTENT" << endl;
+    //after we get response check for message body
+    string msg_body;
+    int  content_length = stoi(resp.FindHeader(CONTENT_LENGTH));
+    int  remaining_content_length = 0;
+
+    //check to see if content was already retrieved from buffer
+    //if it was already retrieved then it will be a substring of 
+    //the response
+    msg_body = response.substr(end_of_headers, content_length);
+    remaining_content_length = content_length - msg_body.length();
+
+    
+    //otherwise get the rest of the message body
+    if(remaining_content_length != 0) {
+
+      try {
+        msg_body += GetMsgBody(remote_fd,content_length);
+      } catch (int e) {
+        //TODO: handle retrieval of body failing
+        cout << "Error" << endl;
+      }
+      
+    }
+
+    //by this time response will have been fully retrieved
+    response += msg_body;
+
+    resp.FormatResponse(formatted);
+    //TODO: add all content to cache
+
+    cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl <<formatted<< endl;
+    
+    cout << response << endl;;
+
+    //size_t response_len = resp.GetTotalLength();
+    size_t response_len = response.length();
     //resp_msg_len = resp_msg.length();
     SendMsg(client_fd, &(response[0]), &response_len);
     cout << "*** RESPONSE LENGTH " << response_len << endl;
-    if (response_len != resp.GetTotalLength())
-      cout << "*** Did not send entire respones\n";
 
-    //TODO: cache
-    //send back to client
-
-    close(client_fd);
+    //for simplicity close remote each time
     close(remote_fd);
-    //break;
   }
+  
+  //if there are any errors
+  //break out of the for loop and
+  //terminate connection
+
+  //if client has closed connection
+  //then we can also close their fd
+  close(client_fd);
 }
 

@@ -39,7 +39,9 @@
 //CUSTOM EXCEPTIONS
 enum proxy_exception_t {
   CONNECTION_ERR,
-  INVALID_HOST
+  INVALID_HOST,
+  INTERNAL_SERVER_ERR // ie server may terminate prematurely
+
 };
 
 /** ==== **/
