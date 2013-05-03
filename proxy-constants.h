@@ -31,6 +31,12 @@ enum prox_exception_t {CONNECTION_ERR,INVALID_HOST};
 /** ==== **/
 
 
+#define INVALID_METHOD "Request is not GET"
+#define NOT_IMPLEMENTED "Not implemented"
+#define BAD_REQUEST "Bad Request"
+#define NOT_IMPLEMENTED_CODE "501"
+#define BAD_REQUEST_CODE "400"
+
 #define SOCKET_ERROR -1
 #define MAX_DATA_SIZE 4096
 #define PORT_NUMBER "16290" // the listening port

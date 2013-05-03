@@ -10,6 +10,7 @@ int ConnectToRemoteHost(const string host , const int port);
 int CreateProxyListener(const char* port);
 int SendMsg(int sockfd, char *buf, int *len);
 void ClientHandler(int client_fd);
+string BuildErrorMsg(const string &code, const string &msg); 
 
 int main (int argc, char *argv[])
 {
@@ -259,10 +260,34 @@ int ConnectToRemoteHost(const string host, const int port) {
   inet_ntop(p->ai_family, get_in_addr((struct sockaddr *)p->ai_addr),
       s, sizeof s);
 
-  printf("proxy socket %d: connecting to %s\n", sockfd, s);
+  printf("proxy socket %d: connecting to %s\n\n", sockfd, s);
 
   freeaddrinfo(servinfo); // all done with this structure
   return sockfd;
+}
+
+/* Build Error Message
+ *
+ * @string code - status code
+ * @string msg - status message
+ *
+ * @return string Error Response Message
+ */
+
+string BuildErrorMsg(const string &code, const string &msg) {
+
+  char out[MAX_DATA_SIZE]; 
+  string ret_string;
+  HttpResponse resp;
+
+  resp.SetVersion("1.1");
+  resp.SetStatusCode(code);
+  resp.SetStatusMsg(msg);
+  resp.FormatResponse(out);
+  ret_string = out;
+  
+  cout << "Built ERROR string:" << ret_string << endl;
+  return ret_string;
 }
 
 /* ClientHandler
@@ -274,25 +299,24 @@ void ClientHandler(int client_fd) {
   HttpRequest req;
   for (;;) {
 
-    string msg; 
-    int total_bytes = 0;
-    int numbytes = 0;
-    char buf[MAX_DATA_SIZE]; 
-    char out[MAX_DATA_SIZE]; 
+    string req_msg, resp_msg; 
+    int total_bytes = 0 , numbytes = 0;
+    char buf[MAX_DATA_SIZE] , out[MAX_DATA_SIZE]; 
  
     //do {
     if((numbytes = recv(client_fd, buf, MAX_DATA_SIZE - 1, 0)) == -1) {
       perror("recv");
     }
  
-    msg += buf;
+    req_msg += buf;
     total_bytes += numbytes;
     //} while (numbytes != 0);
  
-    msg += '\0';
+    req_msg += '\0';
  
     //if the connection was closed
     if(total_bytes == 0) {
+      cout << "Closing Connection" << endl;
       close(client_fd);
       break;
     }
@@ -302,15 +326,25 @@ void ClientHandler(int client_fd) {
     //or header tellss us to close connection
     
     try { 
-      req.ParseRequest(&(msg[0]),numbytes);
+      req.ParseRequest(&(req_msg[0]),req_msg.length());
     } catch (ParseException ex) {
       cerr << "Exception: " << ex.what() << endl; 
-      // TODO: send proper error response
-      
+      // TODO: send proper wror response
+      string err_msg;
+      if(strcmp(ex.what(), INVALID_METHOD) == 0) {
+        err_msg = BuildErrorMsg(NOT_IMPLEMENTED_CODE, NOT_IMPLEMENTED);
+      } else {
+        err_msg = BuildErrorMsg(BAD_REQUEST_CODE, BAD_REQUEST);
+      }
 
+      int err_msg_len = err_msg.length();
+      SendMsg(client_fd, &(err_msg[0]), &err_msg_len);
+      close(client_fd);
+      return;
     }
     req.FormatRequest(out); 
     cout << out << endl;
+    cout << "/** end  Client Request **/" << endl << endl;
 
     // TODO: request is not properly setting host and port number
     cout << "Host: " << req.GetHost() << " Port: " << req.GetPort() << endl;
@@ -319,25 +353,53 @@ void ClientHandler(int client_fd) {
     try {
       remote_fd = ConnectToRemoteHost(req.GetHost(),req.GetPort());
       //then listen 
-      cout << remote_fd;
+      //cout << remote_fd;
     } catch (int e) {
+      cout << "ERROR Connecting to Remote Host" << endl;
  
     }
+
+     cout << "Successfully connected to remote host" << endl;
     //send to remote host
-    int msg_len = req.GetTotalLength();
-    SendMsg(remote_fd, out, &msg_len);
+    int req_msg_len = req.GetTotalLength();
+    SendMsg(remote_fd, out, &req_msg_len);
+    cout <<  "SENT REQUEST TO HOST:" << endl
+    << out << endl;
     
     //rcv response
+    //clear buffers before using them again
+    memset(buf, 0, sizeof buf);
+    memset(out, 0, sizeof out);
+
     if ((numbytes = recv(remote_fd, buf, MAX_DATA_SIZE-1, 0)) == SOCKET_ERROR || numbytes == 0) {
       fprintf(stderr, "recv: numbytes = %d\n", numbytes);
     }
 
-    buf[numbytes] = '\0';
-    printf("proxy socket %d: received '%s'\n", client_fd, buf);
+    //buf[numbytes] = '\0';
+    resp_msg += buf;
+    printf("proxy socket %d: received \n'%s'\n",remote_fd, &(resp_msg[0]));
+
+    HttpResponse resp;
+    try {
+      resp.ParseResponse(&(resp_msg[0]),resp_msg.length());
+    } catch (ParseException e) {
+
+    }
+    resp.FormatResponse(out);
+    cout << "RESPONSE MESSAGE SENT TO CLIENT" << endl 
+    << "'" << out << "'" << endl;
+    int resp_msg_len = resp.GetTotalLength();
+    resp_msg = out;
+    //resp_msg_len = resp_msg.length();
+    SendMsg(client_fd, &(resp_msg[0]), &resp_msg_len);
+    cout << resp_msg_len << endl;
 
     //TODO: cache
     //send back to client
+
     close(client_fd);
+    close(remote_fd);
+    break;
   }
 }
 
