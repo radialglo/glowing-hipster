@@ -25,7 +25,7 @@ void ClientHandler(int client_fd);
 string BuildErrorMsg(const string &code, const string &msg); 
 bool IsNewerTime(time_t time_a, time_t time_b);
 time_t StrToTime(string &date_string); 
-void AddToCache(cache_t &cache, const string& key, const string& response); 
+void UpdateCache(cache_t &cache, const string& key, const string& response); 
 
 cache_t cache;
 mutex m;
@@ -108,7 +108,7 @@ void server_greeting (const struct addrinfo *p) {
 
 // compare time
 bool IsNewerTime(time_t time_a, time_t time_b) {
-  return difftime(time_a, time_b) > 0.0 ? true : false;
+  return difftime(time_a, time_b) >= 0.0 ? true : false;
 }
 
 // get sockaddr, IPv4 or IPv6:
@@ -208,22 +208,23 @@ time_t StrToTime(string &date_string) {
     cerr << "*** Unable to convert " << date_string << endl ;
 
   }
-  cout << endl << "SUCCESSFULLY PARSED " << date_string << endl;
+  //cout << endl << "SUCCESSFULLY PARSED " << date_string << endl;
   return mktime(&tm);
 }
 
-/* AddToCache
+/* UpdateCache
  *
  *
  */
 
-void AddToCache(cache_t &cache, const string& key,const string& response) {
+void UpdateCache(cache_t &cache, const string& key,const string& response) {
   
   try {
     HttpResponse resp;
     resp.ParseResponse(&(response[0]),response.length());
     string str_last_modified = resp.FindHeader(LAST_MODIFIED);
     string str_expires = resp.FindHeader(EXPIRES);
+
     cache_t::iterator it;
     if ((it = cache.find(key)) == cache.end()) {
     
@@ -487,9 +488,16 @@ void ClientHandler(int client_fd) {
       if (modified_since == "") {
         // Check if current time is newer than expires time
         time_t t = time(NULL);
-        if (IsNewerTime(mktime(gmtime(&t)), it->second.expires)) {
+        struct tm* gmt = gmtime(&t);
+        gmt->tm_isdst = 1;
+        time_t gmt_t = mktime(gmt);
+        //if (IsNewerTime(gmt_t, it->second.expires)) {
+        if (gmt_t >= it->second.expires) {
           // Send request to host with added If-Modified-Since with Last-Modified date
           req.AddHeader(IF_MODIFIED_SINCE, it->second.str_last_modified);
+
+          cout << "Current time newer: " << gmt_t << " than " << it->second.expires << endl;
+          
         } else {
           //if the cache is not stale then send 
           //the cached value back to client
@@ -500,6 +508,7 @@ void ClientHandler(int client_fd) {
           SendMsg(client_fd, &(response[0]), &response_len);
           cout << endl <<  "*** Message sent from CACHE " << endl;
           m.unlock();
+          
           continue;
         }
       }
@@ -535,11 +544,10 @@ void ClientHandler(int client_fd) {
 
       size_t err_msg_len = err_msg.length();
       SendMsg(client_fd, &(err_msg[0]), &err_msg_len);
-      close(client_fd);
-      return;
+      continue;
     }
 
-    cout << "*** Successfully connected to remote host" << endl;
+    cout << "\n\n*** Successfully connected to remote host" << endl;
     //send to remote host
     size_t req_msg_len = req.GetTotalLength();
     SendMsg(remote_fd, formatted, &req_msg_len);
@@ -575,7 +583,7 @@ void ClientHandler(int client_fd) {
       close(remote_fd);
       break;
     }
-    cout << "*** RECEIVED RESPONSE FROM HOST\n";
+    cout << "*** RECEIVED RESPONSE FROM HOST\n" << response;
     //printf("proxy socket %d: received \n'%s'\n",remote_fd, &(resp_msg[0]));
 
     HttpResponse resp;
@@ -586,19 +594,19 @@ void ClientHandler(int client_fd) {
 
     }
 
+    
     // Check the 304 Not Modified code
     if (NOT_MODIFIED_CODE == resp.GetStatusCode()) {
 
       HttpResponse cached_resp;
-      cout << "*** Server response Not Modified: \n" << response;
+      //cout << "*** Server response Not Modified: \n" << response;
       string expires_str = resp.FindHeader(EXPIRES);
 
       m.lock(); 
-      response = it->second.response;
+      string cached_response = it->second.response;
+      //cout << "*** Cached response: \n" << cached_response << endl;
 
-      cout << "*** Cached response: \n" << response << endl;
-
-      cached_resp.ParseResponse(&(response[0]), response.length());
+      cached_resp.ParseResponse(&(cached_response[0]), cached_response.length());
       // Update the expires date 
       if (expires_str != "") {
         it->second.expires = StrToTime(expires_str);
@@ -611,22 +619,25 @@ void ClientHandler(int client_fd) {
       cached_resp.FormatResponse(formatted);
 
       // Get out the content
-      size_t end_of_headers_pos = response.find(END_OF_HEADERS) + END_OF_HEADERS_LEN;
-      string new_response = string(formatted) + response.substr(end_of_headers_pos);
+      size_t end_of_headers_pos = cached_response.find(END_OF_HEADERS) + END_OF_HEADERS_LEN;
+      string new_response = string(formatted) + cached_response.substr(end_of_headers_pos);
 
+      
       size_t resp_msg_len = new_response.length();
       SendMsg(client_fd, &(new_response[0]), &resp_msg_len);
+      
 
       m.lock();
       it->second.response = new_response;
       m.unlock(); 
-      close(remote_fd); 
-      continue;
+      cout << "*** Not Modified Response Sent To Client:\n" << it->second.response;
 
+      close(remote_fd);
+      continue;
     }
 
 
-    cout << "*** CHECKING FOR CONTENT" << endl;
+    //cout << "*** CHECKING FOR CONTENT" << endl;
     //after we get response check for message body
     string content_length_str = resp.FindHeader(CONTENT_LENGTH);
     int content_length = 0;
@@ -660,11 +671,10 @@ void ClientHandler(int client_fd) {
 
     // Add or update file to cache
     m.lock();
-    AddToCache(cache, key, response); 
+    UpdateCache(cache, key, response); 
     m.unlock();
 
-    cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl;
-    cout << response << endl;;
+    cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl << response << endl;
 
     size_t response_len = response.length();
     SendMsg(client_fd, &(response[0]), &response_len);
