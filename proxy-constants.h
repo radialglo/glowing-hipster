@@ -56,10 +56,12 @@ enum proxy_exception_t {
 #define IF_MODIFIED_SINCE "If-Modified-Since"
 #define EXPIRES "Expires"
 #define LAST_MODIFIED "Last-Modified"
-#define NOT_MODIFIED "Not Modified"
+
 
 
 // HTTP response codes
+#define NOT_MODIFIED_CODE "304"
+
 #define INVALID_METHOD "Request is not GET"
 
 #define NOT_IMPLEMENTED_CODE "501"
