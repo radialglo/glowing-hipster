@@ -30,7 +30,6 @@
 // For threading and cache
 #include <unordered_map>
 #include <mutex>
-#include <thread>
 
 // For date and time
 #include <ctime>

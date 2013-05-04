@@ -299,8 +299,7 @@ int CreateProxyListener(const char* port) {
       continue;
     }
 
-    if (setsockopt(listen_socketfd, SOL_SOCKET, SO_REUSEADDR, &yes,
-        sizeof(int)) == -1) {
+    if (setsockopt(listen_socketfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
       perror("setsockopt");
       exit(1);
     }
@@ -341,6 +340,7 @@ int ConnectToRemoteHost(const string host, const int port) {
   int sockfd;  
   struct addrinfo hints, *servinfo, *p;
   int rv;
+  int yes = 1;
   char s[INET6_ADDRSTRLEN];
 
   memset(&hints, 0, sizeof hints);
@@ -361,6 +361,11 @@ int ConnectToRemoteHost(const string host, const int port) {
         p->ai_protocol)) == -1) {
       perror("client: socket");
       continue;
+    }
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
+      perror("setsockopt");
+      exit(1);
     }
 
     if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
@@ -544,6 +549,7 @@ void ClientHandler(int client_fd) {
 
       size_t err_msg_len = err_msg.length();
       SendMsg(client_fd, &(err_msg[0]), &err_msg_len);
+      close(remote_fd);
       continue;
     }
 
@@ -629,8 +635,8 @@ void ClientHandler(int client_fd) {
 
       m.lock();
       it->second.response = new_response;
-      m.unlock(); 
       cout << "*** Not Modified Response Sent To Client:\n" << it->second.response;
+      m.unlock(); 
 
       close(remote_fd);
       continue;
