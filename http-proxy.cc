@@ -370,7 +370,8 @@ int ConnectToRemoteHost(const string host, const int port) {
 
     if (connect(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
       close(sockfd);
-      perror("client: connect");
+      //perror("client: connect");
+      cerr << "client: connect\n";
       continue;
     }
 
@@ -449,7 +450,8 @@ void ClientHandler(int client_fd) {
     }
     
     if (num_bytes == SOCKET_ERROR) {
-      perror("client recv");
+      //perror("client recv");
+      cerr << "client recv\n";
       //TODO: SEND BAD REQUEST
     }
 

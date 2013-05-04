@@ -26,6 +26,7 @@
 
 #include <boost/lexical_cast.hpp>
 #include <boost/thread.hpp>
+#include <boost/algorithm/string.hpp>
 
 // For threading and cache
 #include <unordered_map>
@@ -75,7 +76,7 @@ enum proxy_exception_t {
 
 #define SOCKET_ERROR -1
 #define MAX_DATA_SIZE 4096
-#define PORT_NUMBER "16290" // the listening port
+#define PORT_NUMBER "14805" // the listening port
                             // for client connections
                             // TODO: this number should be reset to 14805
 

@@ -9,6 +9,7 @@
 
 #include <string> // C++ STL string
 #include <string.h> // helpers to copy C-style strings
+#include <boost/algorithm/string.hpp>
 
 #include "compat.h"
 
