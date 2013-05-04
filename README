@@ -1,4 +1,5 @@
-General
+G
+neral
 =======
 
 To learn more about ./waf, refer to http://code.google.com/p/waf/
@@ -30,7 +31,57 @@ If there are any errors, please email me.
 
 build/http-proxy
 
+Environment details
+==================
+According to the TA, it is okay to use the C++11 standard
+for the implementation
+https://piazza.com/class#spring2013/cs118/70
+
+The original wscript has been modified to support the C++11 standard,
+by including the CXXflag : '-std=c++0x'
+We are using features such as unordered_map for our implementation.
+
+Concurrency:
+We are using boost, our our multithreaded environment
+
+Code Layout
+==================
+proxy-constants.h - all libraries and custom defined constants 
+used for the program
+
+all constants are defined in CAPS_LOCK
+                   
+http-proxy.cc - code implementation
+
 Implementation details
 ===================
+
+The proxy acts both as a client and server.
+A server to the client that is requesting information
+and a client to the remote host, and effectively servers as the intermediary
+between these two entities.
+
+The flow of the program is 
+1. Listen on server port  
+2. Accept Client Connection
+3. Parse Client Request
+4. Connect to Remote Host
+5. Contact Remote Host
+6. Get Response From Remote Host and return object to the client 
+
+- throw and catch errors and report relevant errors back to the client
+
+We use an unordered map , the C++ equivalent, of a hash map to implement our cache.
+It creates a hash of the absolute path of the object to meta_data regarding the response:
+expiration time, last_modified, message body. If object has not expired and the client
+does not check for the last modified date, then we can safely return the object back
+to the client  get performance gains.
+
+Coding Style
+===========
+Since many methods such as fully sending and recieving messages are reused
+multiple times we wrote many methods to encapsulate  these procedures. We also 
+strived to remove coupling from these methods by having these methods serve as a black
+box that simply takes an input and returns values.
 
 

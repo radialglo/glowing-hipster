@@ -10,4 +10,16 @@
   Anthony Su 803912902
 
   Project Breakdown:
+  Stanley
+     - multhreading 
+     - caching
+     - checking for expiration
+     - checking for modification in cache
+     - communcation processes
+  Anthony 
+     - establishing the server connection
+     - communication processes
+     - error handling
+  //code repository
+  https://github.com/radialglo/glowing-hipster
 
