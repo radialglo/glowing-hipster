@@ -10,23 +10,22 @@ typedef struct Metadata {
   string response;
 } meta_t;
 
-typedef pair<string, meta_t> cache_record_t;
 typedef unordered_map<string, meta_t> cache_t;
   
-typedef pair<string, meta_t> cache_record_t;
-typedef unordered_map<string, meta_t> cache_t;
 void server_greeting (const struct addrinfo *p); 
 void *get_in_addr(struct sockaddr *sa);
 in_port_t get_in_port(struct sockaddr *sa);
+
 int ConnectToRemoteHost(const string host , const int port); 
 int CreateProxyListener(const char* port);
 int SendMsg(int sockfd, char *buf, int *len);
 string GetMsgBody(int sockfd, size_t total, size_t len); 
 void ClientHandler(int client_fd);
+
 string BuildErrorMsg(const string &code, const string &msg); 
 bool IsNewerTime(time_t time_a, time_t time_b);
 time_t StrToTime(string &date_string); 
-void AddToCache(cache_t &cache, const string key, const string response); 
+void AddToCache(cache_t &cache, const string& key, const string& response); 
 
 cache_t cache;
 mutex m;
@@ -221,24 +220,38 @@ time_t StrToTime(string &date_string) {
  *
  */
 
-void AddToCache(cache_t &cache, const string key,const string response) {
+void AddToCache(cache_t &cache, const string& key,const string& response) {
   
-  HttpResponse resp;
-  resp.ParseResponse(&(response[0]),response.length());
-  
-  //build metadata object
-  meta_t meta_data;
-  string str_last_modified = resp.FindHeader(LAST_MODIFIED),
-         str_expires = resp.FindHeader(EXPIRES);
+  try {
+    HttpResponse resp;
+    resp.ParseResponse(&(response[0]),response.length());
+    string str_last_modified = resp.FindHeader(LAST_MODIFIED);
+    string str_expires = resp.FindHeader(EXPIRES);
+    cache_t::iterator it;
+    if ((it = cache.find(key)) == cache.end()) {
+    
+      //build metadata object
+      meta_t meta_data;
+      meta_data.str_last_modified = str_last_modified;
+      meta_data.last_modified = StrToTime(str_last_modified);
+      meta_data.expires = StrToTime(str_expires);
+      meta_data.response = response;
 
-  meta_data.str_last_modified = resp.FindHeader(LAST_MODIFIED);
-  meta_data.last_modified = StrToTime(str_last_modified);
-  meta_data.expires = StrToTime(str_expires);
-  meta_data.response = response;
+      cache[key] = meta_data;
+    } else {
+      if (str_last_modified != "") {
+        it->second.str_last_modified = str_last_modified;
+        it->second.last_modified = StrToTime(str_last_modified); 
+      }
 
-  cache_record_t record = {key, meta_data};
-  cache.insert (record);
-
+      if (str_expires != "") {
+        it->second.expires = StrToTime(str_expires); 
+      }
+      it->second.response = response;
+    }
+  } catch (ParseException(ex)) {
+    cerr << "*** " << key << " add to cache failed.\n";
+  }
 }
 
 /* CreateProxyListener
@@ -426,18 +439,19 @@ void ClientHandler(int client_fd) {
     //make sure that we have retrieved full request before continuing
     while  ((num_bytes = recv(client_fd, buf, MAX_DATA_SIZE-1, 0)) > 0 ) {
 
-       req_msg.append(buf, num_bytes);
+      req_msg.append(buf, num_bytes);
 
-       //if we found the end of the headers 
-       if((end_of_req_headers = req_msg.find(END_OF_HEADERS)) != string::npos) {
-         break;
-       }
+      //if we found the end of the headers 
+      if((end_of_req_headers = req_msg.find(END_OF_HEADERS)) != string::npos) {
+        break;
+      }
+               
 
     }
     
     if (num_bytes == SOCKET_ERROR) {
       perror("client recv");
-      break;
+      //TODO: SEND BAD REQUEST
     }
 
     //if the connection was closed
@@ -490,11 +504,11 @@ void ClientHandler(int client_fd) {
         size_t response_len = response.length();
         SendMsg(client_fd, &(response[0]), &response_len);
         cout << endl <<  "Message sent from CACHE " << endl;
+        m.unlock();
         continue;
 
         }
 
-        m.unlock();
       } else { // Always send request to host
         m.unlock();
         // Convert the string to time_t 
@@ -584,7 +598,7 @@ void ClientHandler(int client_fd) {
     HttpResponse resp;
     try {
       resp.ParseResponse(&(response[0]),response.length());
-    } catch (ParseException e) {
+    } catch (ParseException ex) {
 
     }
 
@@ -644,7 +658,6 @@ void ClientHandler(int client_fd) {
       //add file to cache
       AddToCache(cache, key, response); 
     }
-
     m.unlock();
 
     cout << "*** RESPONSE MESSAGE SENT TO CLIENT" << endl;

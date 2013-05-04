@@ -18,7 +18,7 @@ def configure (env):
 #
 
     env.check_boost(lib='system thread')
-    env.add_supported_cxxflags (cxxflags = ['-O0', '-g3', '-Wall', '-std=c++0x', 
+    env.add_supported_cxxflags (cxxflags = ['-O0', '-g3', '-Wall', '-std=c++0x',
                                             '-Wno-unused-local-typedefs', '-Wno-unused-private-field', 
                                             '-fcolor-diagnostics', '-Qunused-arguments', 
                                             '-Werror'])
