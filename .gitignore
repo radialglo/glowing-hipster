@@ -43,6 +43,5 @@ build
 .lock*
 \#*
 *swp
-wscript
 
 

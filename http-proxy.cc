@@ -416,16 +416,30 @@ void ClientHandler(int client_fd) {
     HttpRequest req;
     int num_bytes = 0;
     char buf[MAX_DATA_SIZE];
+    string req_msg;
+    size_t end_of_req_headers = string::npos; 
  
     // Get Client Request
     // TODO: we assume one HTTP GET per recv
     // WE MAY NEED TO MEMMEM IF THERE ARE MULTIPLE REQUESTS PER RECV
     memset(buf, 0, sizeof(buf));
-    if ((num_bytes = recv(client_fd, buf, MAX_DATA_SIZE - 1, 0)) == -1) {
-      perror("client recv");
+    //make sure that we have retrieved full request before continuing
+    while  ((num_bytes = recv(client_fd, buf, MAX_DATA_SIZE-1, 0)) > 0 ) {
+
+       req_msg.append(buf, num_bytes);
+
+       //if we found the end of the headers 
+       if((end_of_req_headers = req_msg.find(END_OF_HEADERS)) != string::npos) {
+         break;
+       }
+
     }
-    string req_msg = buf;
- 
+    
+    if (num_bytes == SOCKET_ERROR) {
+      perror("client recv");
+      break;
+    }
+
     //if the connection was closed
     if (num_bytes == 0) {
       cout << "Closing Connection" << endl;
