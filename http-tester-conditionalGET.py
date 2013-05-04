@@ -99,7 +99,6 @@ try:
     data = resp.read()
     conn.close()
 
-    #time.sleep(3)
     time.sleep(3)
     conn2 = HTTPConnection(proxy)
     conn2.request("GET", "http://127.0.0.1:" + sport1 + "/basic")
